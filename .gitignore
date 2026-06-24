@@ -1,0 +1,19 @@
+venv/
+**__pycache__/
+.streamlit/
+temp/
+*.log
+.DS_Store
+*.pyc
+
+# Production v1.0 data directories (local-only, never commit)
+data/
+uploads/
+outputs/
+exports/
+logs/
+*.db
+*.db-wal
+*.db-shm
+.pytest_cache/
+*.pt

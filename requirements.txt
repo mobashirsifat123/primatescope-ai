@@ -1,0 +1,31 @@
+# PrimateScope AI — Production v1.0 Dependencies
+# Python 3.11 or 3.12 recommended (do NOT use 3.14)
+
+# Core UI
+streamlit==1.58.0
+
+# Data processing
+pandas==3.0.3
+numpy==2.5.0
+Pillow==12.2.0
+opencv-python==4.13.0.92
+
+# Visualization
+matplotlib==3.11.0
+networkx==3.6.1
+
+# Existing YOLO fallback (demo mode)
+ultralytics==8.4.75
+ultralytics-thop==2.0.20
+torch==2.12.1
+torchvision==0.27.1
+
+# Production inference engines (install separately if Python version allows)
+# speciesnet        # pip install speciesnet (macOS: add --use-pep517)
+# megadetector      # pip install megadetector
+
+# Database (stdlib sqlite3 used; sqlalchemy optional)
+# sqlalchemy
+
+# Testing
+pytest

@@ -345,7 +345,7 @@ SPECIES_OPTIONS = [
 NAV_PAGES = [
     "Overview",
     "Research Dashboard",
-    "Camera-Trap Analysis",
+    "Camera-Trap Analysis Workbench",
     "Review Queue",
     "Behavior Intelligence",
     "Field Stations",
@@ -2487,7 +2487,7 @@ def main():
         page_overview()
     elif page == "Research Dashboard":
         page_research_dashboard()
-    elif page == "Camera-Trap Analysis":
+    elif page == "Camera-Trap Analysis Workbench":
         page_live_analysis()
     elif page == "Review Queue":
         st.title("Review Queue")

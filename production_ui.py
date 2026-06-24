@@ -209,60 +209,51 @@ def page_live_analysis_real():
             unsafe_allow_html=True,
         )
 
-    # --- Project selector (inline, not sidebar) ---
-    st.markdown('<div class="ps-section-title" style="margin-top:16px;">Project</div>',
-                unsafe_allow_html=True)
-    conn = _get_conn()
-    try:
-        projects = ProjectRepo.list_all(conn)
-        if projects:
-            names = [f"{p.name} ({p.country_code or '---'})" for p in projects]
-            sel = st.selectbox("Active Project", names, index=0, key="real_proj_sel")
-            idx = names.index(sel)
-            st.session_state["ps_project_id"] = projects[idx].id
-            st.session_state["ps_project"] = projects[idx]
-        else:
-            st.info("No projects yet. Create one below.")
-        with st.expander("Create New Project"):
-            pname = st.text_input("Project Name", value=DEFAULT_PROJECT_NAME, key="real_np_name")
-            pdesc = st.text_input("Description", key="real_np_desc")
-            psite = st.text_input("Study Site", key="real_np_site",
-                                  help="E.g. Sundarbans West, Lawachara NP")
-            pcountry = st.selectbox(
-                "Country Code", list(COMMON_COUNTRY_CODES),
-                index=list(COMMON_COUNTRY_CODES).index(DEFAULT_COUNTRY_CODE),
-                key="real_np_country",
-            )
-            if st.button("Create Project", key="real_create_proj", use_container_width=True):
-                cc = validate_country_code(pcountry) or DEFAULT_COUNTRY_CODE
-                p = ProjectRepo.create(conn, pname, pdesc, cc, study_site=psite or None)
-                st.success(f"Created: {p.name}")
-                st.rerun()
-    finally:
-        conn.close()
-
-    pid = st.session_state.get("ps_project_id")
-    if not pid:
-        st.warning("Create or select a project to proceed.")
-        return
-
-    # Show current project info
-    proj = st.session_state.get("ps_project")
-    if proj:
-        site_str = f" — {proj.study_site}" if getattr(proj, 'study_site', None) else ""
-        st.markdown(
-            f'<div class="ps-card" style="padding:10px;margin-bottom:12px;">'
-            f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-            f'<span class="ps-label">Active Project</span>'
-            f'<span class="ps-data">{proj.name}{site_str} ({proj.country_code or "---"})</span>'
-            f'</div></div>',
-            unsafe_allow_html=True,
-        )
-
     col_l, col_r = st.columns([1, 2], gap="large")
 
     with col_l:
-        st.markdown('<div class="ps-section-title">Upload Media</div>', unsafe_allow_html=True)
+        st.markdown('<div class="ps-section-title">Analysis Setup</div>', unsafe_allow_html=True)
+        
+        # --- Project selector (inline, not sidebar) ---
+        conn = _get_conn()
+        try:
+            projects = ProjectRepo.list_all(conn)
+            if projects:
+                names = [f"{p.name} ({p.country_code or '---'})" for p in projects]
+                sel = st.selectbox("Active Project", names, index=0, key="real_proj_sel")
+                idx = names.index(sel)
+                st.session_state["ps_project_id"] = projects[idx].id
+                st.session_state["ps_project"] = projects[idx]
+            else:
+                st.info("No projects yet. Create one below.")
+            with st.expander("Create New Project", expanded=False):
+                st.markdown('<div class="ps-label" style="margin-bottom:8px;">New Project Details</div>', unsafe_allow_html=True)
+                pname = st.text_input("Project Name", value=DEFAULT_PROJECT_NAME, key="real_np_name")
+                pdesc = st.text_input("Description", key="real_np_desc")
+                psite = st.text_input("Study Site", key="real_np_site",
+                                      help="E.g. Sundarbans West, Lawachara NP")
+                pcountry = st.selectbox(
+                    "Country Code", list(COMMON_COUNTRY_CODES),
+                    index=list(COMMON_COUNTRY_CODES).index(DEFAULT_COUNTRY_CODE),
+                    key="real_np_country",
+                )
+                if st.button("Create Project", key="real_create_proj", use_container_width=True):
+                    cc = validate_country_code(pcountry) or DEFAULT_COUNTRY_CODE
+                    p = ProjectRepo.create(conn, pname, pdesc, cc, study_site=psite or None)
+                    st.session_state["ps_project_id"] = p.id
+                    st.session_state["ps_project"] = p
+                    st.success(f"Created: {p.name}")
+                    st.rerun()
+        finally:
+            conn.close()
+
+        pid = st.session_state.get("ps_project_id")
+        if not pid:
+            st.warning("Create or select a project to proceed.")
+            return
+
+        st.markdown('<hr style="margin:12px 0;">', unsafe_allow_html=True)
+        st.markdown('<div class="ps-label" style="margin-bottom:8px;">Upload Media</div>', unsafe_allow_html=True)
         images = st.file_uploader(
             "Camera-trap images",
             type=["jpg", "jpeg", "png", "bmp", "tif", "tiff"],
@@ -307,19 +298,26 @@ def page_live_analysis_real():
         )
         st.session_state["ps_engine"] = engine_choice
 
-        # Confidence threshold
-        conf_thresh = st.slider(
-            "Confidence Threshold",
-            min_value=0.0, max_value=1.0, value=BORDERLINE_CONFIDENCE, step=0.05,
-            help="Review queue will flag predictions below this threshold.",
-            key="real_conf_thresh",
+        st.markdown('<div class="ps-label" style="margin-top:16px;margin-bottom:8px;">Model Settings</div>', unsafe_allow_html=True)
+        det_thresh = st.slider(
+            "Detection threshold",
+            min_value=0.0, max_value=1.0, value=0.25, step=0.05,
+            help="Minimum confidence to keep MegaDetector animal/person/vehicle boxes.",
+            key="real_det_thresh",
+        )
+        rev_thresh = st.slider(
+            "Review confidence threshold",
+            min_value=0.0, max_value=1.0, value=0.70, step=0.05,
+            help="Predictions below this score are flagged for manual review.",
+            key="real_rev_thresh",
         )
 
         force = st.checkbox("Force re-run inference", value=False, key="real_force")
+        debug_country = st.checkbox("Disable country filter for debugging", value=False, key="real_debug_country")
         frame_interval = st.slider(
-            "Frame sampling interval (seconds)",
-            min_value=0.5, max_value=5.0, value=1.0, step=0.5,
-            help="For videos, extract 1 frame every N seconds.",
+            "Detection frame interval",
+            min_value=0.25, max_value=5.0, value=1.0, step=0.25,
+            help="For videos, extract 1 frame every N seconds. Use 0.5s for short clips.",
             key="real_frame_interval",
         )
 
@@ -339,94 +337,7 @@ def page_live_analysis_real():
                             key="real_run_btn")
 
     with col_r:
-        # --- Backend Diagnostic Button ---
-        if st.button("Run Backend Diagnostic", use_container_width=True, key="real_diag_btn"):
-            with st.status("Running deep diagnostics...", expanded=True) as diag_status:
-                st.write(f"Python executable: {_sys.executable}")
-                st.write(f"Python version: {_sys.version}")
-                import os as _os
-                st.write(f"Working directory: {_os.getcwd()}")
-                st.write(f"app.py exists: {Path('app.py').exists()}")
-                st.write(f"production_ui.py import: SUCCESS")
-                st.write(f"database import: SUCCESS")
-                st.write(f"services import: SUCCESS")
-                st.write(f"SpeciesNet available: {'YES' if sn_ok else 'NO'} — {sn_msg}")
-                st.write(f"MegaDetector available: {'YES' if md_ok else 'NO'} — {md_msg}")
-                sn_cli_ok, sn_cli_out = check_speciesnet_available()
-                st.write(f"SpeciesNet CLI help: {'SUCCESS' if sn_cli_ok else 'FAILED'}")
-                md_cli_ok, md_cli_out = check_megadetector_available()
-                st.write(f"MegaDetector CLI help: {'SUCCESS' if md_cli_ok else 'FAILED'}")
-                uploads_dir = Path("uploads")
-                uploads_dir.mkdir(exist_ok=True)
-                st.write(f"Upload folder writable: {_os.access(str(uploads_dir), _os.W_OK)}")
-                output_dir = Path("output")
-                output_dir.mkdir(exist_ok=True)
-                st.write(f"Output folder writable: {_os.access(str(output_dir), _os.W_OK)}")
-                try:
-                    diag_conn = _get_conn()
-                    cursor = diag_conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table'")
-                    tbl_count = cursor.fetchone()[0]
-                    st.write(f"Database connection: SUCCESS ({tbl_count} tables)")
-                    diag_conn.close()
-                except Exception as db_err:
-                    st.write(f"Database connection: FAILED — {db_err}")
-                engine_ver = get_engine_version()
-                st.write(f"SpeciesNet version: {engine_ver or 'N/A'}")
-                diag_status.update(label="Diagnostics completed", state="complete")
-
-        # --- Developer Diagnostics ---
-        with st.expander("Developer Diagnostics"):
-            diag_conn = _get_conn()
-            try:
-                media_count = diag_conn.execute(
-                    "SELECT count(*) FROM media_files WHERE project_id = ?", (pid,)
-                ).fetchone()[0]
-                det_count = diag_conn.execute(
-                    "SELECT count(*) FROM detections WHERE project_id = ?", (pid,)
-                ).fetchone()[0]
-                pred_count = diag_conn.execute(
-                    "SELECT count(*) FROM species_predictions WHERE project_id = ?", (pid,)
-                ).fetchone()[0]
-                rev_count = diag_conn.execute(
-                    "SELECT count(*) FROM review_items WHERE project_id = ?", (pid,)
-                ).fetchone()[0]
-            except Exception:
-                media_count = det_count = pred_count = rev_count = "error"
-            finally:
-                diag_conn.close()
-            last_batch = st.session_state.get("last_batch")
-            last_run_id = last_batch.inference_run_id if last_batch else "N/A"
-            last_json = (last_batch.inference_result.output_json_path
-                         if last_batch and last_batch.inference_result else "N/A")
-            json_exists = Path(last_json).exists() if last_json and last_json != "N/A" else False
-            st.markdown(
-                f'<div class="ps-card" style="padding:12px;font-size:12px;">'
-                f'<div class="ps-table-row"><span class="ps-label">Current Mode</span>'
-                f'<span class="ps-data">Real Analysis</span></div>'
-                f'<div class="ps-table-row"><span class="ps-label">_PROD_AVAILABLE</span>'
-                f'<span class="ps-data">True</span></div>'
-                f'<div class="ps-table-row"><span class="ps-label">Project ID</span>'
-                f'<span class="ps-data">{pid}</span></div>'
-                f'<div class="ps-table-row"><span class="ps-label">Engine</span>'
-                f'<span class="ps-data">{engine_choice}</span></div>'
-                f'<div class="ps-table-row"><span class="ps-label">Last Inference Run</span>'
-                f'<span class="ps-data">{last_run_id}</span></div>'
-                f'<div class="ps-table-row"><span class="ps-label">Last Output JSON</span>'
-                f'<span class="ps-data">{last_json}</span></div>'
-                f'<div class="ps-table-row"><span class="ps-label">JSON Exists</span>'
-                f'<span class="ps-data">{json_exists}</span></div>'
-                f'<div class="ps-table-row"><span class="ps-label">Media Records</span>'
-                f'<span class="ps-data">{media_count}</span></div>'
-                f'<div class="ps-table-row"><span class="ps-label">Detection Records</span>'
-                f'<span class="ps-data">{det_count}</span></div>'
-                f'<div class="ps-table-row"><span class="ps-label">Prediction Records</span>'
-                f'<span class="ps-data">{pred_count}</span></div>'
-                f'<div class="ps-table-row"><span class="ps-label">Review Items</span>'
-                f'<span class="ps-data">{rev_count}</span></div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
+        st.markdown('<div class="ps-section-title">Run Status & Results</div>', unsafe_allow_html=True)
         # --- Inference execution ---
         job_key = f"job_{pid}_{total_files}_{force}"
         if run_btn and total_files > 0:
@@ -436,8 +347,8 @@ def page_live_analysis_real():
                     all_files = list(images or []) + list(videos or [])
                     result = None
                     for update in run_full_batch(
-                        conn, _storage, pid, all_files, country, force,
-                        frame_interval, conf_thresh, engine=engine_choice,
+                        conn, _storage, pid, all_files, country if not debug_country else None, force,
+                        frame_interval, det_thresh=det_thresh, review_thresh=rev_thresh, engine=engine_choice,
                     ):
                         if isinstance(update, str):
                             st.write(f"🔄 {update}")
@@ -456,22 +367,39 @@ def page_live_analysis_real():
         _render_last_batch_results()
 
 
+def safe_attr(obj, name, default="N/A"):
+    return getattr(obj, name, default) if obj else default
+
 def _render_backend_proof(result):
     if not result:
         return
     with st.expander("Backend Proof"):
+        run_id = result.inference_run_id if getattr(result, "inference_run_id", None) else "N/A"
+        inf = result.inference_result
+        dur = f"{safe_attr(inf, 'duration_seconds')}s" if inf else "N/A"
+        cmd = safe_attr(inf, "command")
+        json_path = safe_attr(inf, "output_json_path")
+        
+        from pathlib import Path
+        json_exists = "YES" if json_path and json_path != "N/A" and Path(json_path).exists() else "NO"
+        ret_code = safe_attr(inf, "return_code")
+        
         st.markdown(
-            f'<div class="ps-table-row"><span class="ps-label">Inference Run ID</span><span class="ps-data">{result.inference_result.id if result.inference_result else "N/A"}</span></div>'
-            f'<div class="ps-table-row"><span class="ps-label">Duration</span><span class="ps-data">{result.inference_result.duration_seconds if result.inference_result else "N/A"}s</span></div>'
-            f'<div class="ps-table-row"><span class="ps-label">Media DB Records</span><span class="ps-data">{result.media_count}</span></div>'
-            f'<div class="ps-table-row"><span class="ps-label">Detection DB Records</span><span class="ps-data">{result.detection_count}</span></div>'
-            f'<div class="ps-table-row"><span class="ps-label">Prediction DB Records</span><span class="ps-data">{result.prediction_count}</span></div>'
-            f'<div class="ps-table-row"><span class="ps-label">Review DB Records</span><span class="ps-data">{result.review_item_count}</span></div>',
+            f'<div class="ps-table-row"><span class="ps-label">Inference Run ID</span><span class="ps-data">{run_id}</span></div>'
+            f'<div class="ps-table-row"><span class="ps-label">Engine Command</span><span class="ps-data">{cmd}</span></div>'
+            f'<div class="ps-table-row"><span class="ps-label">Output JSON path</span><span class="ps-data">{json_path}</span></div>'
+            f'<div class="ps-table-row"><span class="ps-label">Output JSON exists</span><span class="ps-data">{json_exists}</span></div>'
+            f'<div class="ps-table-row"><span class="ps-label">Runtime duration</span><span class="ps-data">{dur}</span></div>'
+            f'<div class="ps-table-row"><span class="ps-label">Return code</span><span class="ps-data">{ret_code}</span></div>'
+            f'<div class="ps-table-row"><span class="ps-label">Media records created</span><span class="ps-data">{getattr(result, "media_count", 0)}</span></div>'
+            f'<div class="ps-table-row"><span class="ps-label">Detection records created</span><span class="ps-data">{getattr(result, "detection_count", 0)}</span></div>'
+            f'<div class="ps-table-row"><span class="ps-label">Prediction records created</span><span class="ps-data">{getattr(result, "prediction_count", 0)}</span></div>'
+            f'<div class="ps-table-row"><span class="ps-label">Review items created</span><span class="ps-data">{getattr(result, "review_item_count", 0)}</span></div>',
             unsafe_allow_html=True
         )
-        inf = result.inference_result
-        if inf and (inf.stdout or inf.stderr):
-            st.code(f"STDOUT:\n{inf.stdout or 'None'}\n\nSTDERR:\n{inf.stderr or 'None'}", language="text")
+        if inf and (getattr(inf, "stdout", "") or getattr(inf, "stderr", "")):
+            with st.expander("stdout / stderr"):
+                st.code(f"STDOUT:\n{getattr(inf, 'stdout', 'None')}\n\nSTDERR:\n{getattr(inf, 'stderr', 'None')}", language="text")
 
 def _render_last_batch_results():
     """Render the results of the last inference batch."""
@@ -495,11 +423,82 @@ def _render_last_batch_results():
 
     _render_backend_proof(result)
 
+    # Frame Extraction Preview
+    from services.file_storage import FileStorage
+    _storage = FileStorage()
+    pid = st.session_state.get("ps_project_id")
+    conn = _get_conn()
+    try:
+        media_list = MediaRepo.list_by_project(conn, pid)
+        video_media = [m for m in media_list if m.media_type == "video"]
+        for vm in video_media:
+            frames_dir = _storage.frames_dir(pid, Path(vm.original_filename).stem)
+            if frames_dir.exists():
+                frames = sorted(list(frames_dir.glob("*.jpg")))
+                if frames:
+                    with st.expander(f"Frame Extraction Preview: {vm.original_filename}"):
+                        st.markdown(f"**Total frames extracted:** {len(frames)}")
+                        st.markdown(f"**Dimensions:** {getattr(vm, 'width', 'N/A')}x{getattr(vm, 'height', 'N/A')}")
+                        st.markdown("**First 10 frames:**")
+                        cols = st.columns(5)
+                        for idx, fp in enumerate(frames[:10]):
+                            with cols[idx % 5]:
+                                # Try to extract timestamp from filename e.g. _t005.00
+                                ts_match = re.search(r"_t([0-9.]+)\.jpg", fp.name)
+                                ts_str = f"t={ts_match.group(1)}s" if ts_match else "t=?"
+                                st.image(str(fp), caption=ts_str, use_container_width=True)
+    finally:
+        conn.close()
+
+    # Raw JSON expander
+    if getattr(result, "parse_result", None):
+        with st.expander("Raw Inference Output (JSON)"):
+            if result.inference_result and getattr(result.inference_result, "output_json_path", None):
+                json_path = Path(result.inference_result.output_json_path)
+                if json_path.exists():
+                    try:
+                        import json
+                        with open(json_path, "r") as f:
+                            raw_json = json.load(f)
+                        st.markdown(f"**JSON Path:** `{json_path}`")
+                        st.markdown(f"**Top-level keys:** `{', '.join(raw_json.keys())}`")
+                        st.markdown(f"**Total items (images/frames):** `{len(raw_json.get('images', raw_json.get('predictions', [])))}`")
+                        
+                        raw_dets = 0
+                        raw_preds = 0
+                        items = raw_json.get('images', raw_json.get('predictions', []))
+                        for item in items:
+                            if "detections" in item:
+                                raw_dets += len(item["detections"])
+                        
+                        st.markdown(f"**Raw detections before filtering:** `{raw_dets}`")
+                        
+                        if items:
+                            st.json(items[0], expanded=False)
+                    except Exception:
+                        st.code("Could not load raw JSON", language="text")
+                else:
+                    st.info("Output JSON file not found.")
+            else:
+                st.info("No raw JSON available.")
+
+    if getattr(result, "detection_count", 0) == 0 and getattr(result, "prediction_count", 0) == 0:
+        st.markdown(
+            f'<div class="ps-banner">'
+            f'<span class="material-symbols-outlined" style="font-size:16px;">info</span>'
+            f'<b>No final detections found above threshold.</b><br>'
+            f'Frames/Images processed: {getattr(result, "media_count", 0)}<br>'
+            f'Suggestion: Lower the Detection Threshold or check if the frame extraction worked.'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
     st.markdown(
         f'<div class="ps-banner">'
         f'<span class="material-symbols-outlined" style="font-size:16px;">check_circle</span>'
-        f'AI-assisted analysis complete — {result.detection_count} detections, '
-        f'{result.prediction_count} predictions, {result.review_item_count} review items. '
+        f'AI-assisted analysis complete — {getattr(result, "detection_count", 0)} detections, '
+        f'{getattr(result, "prediction_count", 0)} predictions, {getattr(result, "review_item_count", 0)} review items. '
         f'<span style="font-size:11px;color:{CLR_SLATE};">Review required before export.</span>'
         f'</div>',
         unsafe_allow_html=True,
@@ -577,22 +576,7 @@ def _render_last_batch_results():
     finally:
         conn.close()
 
-    # Raw JSON expander
-    if result.parse_result:
-        with st.expander("Raw Inference Output (JSON)"):
-            if result.inference_result and result.inference_result.output_json_path:
-                json_path = Path(result.inference_result.output_json_path)
-                if json_path.exists():
-                    try:
-                        with open(json_path, "r") as f:
-                            raw_json = json.load(f)
-                        st.json(raw_json)
-                    except Exception:
-                        st.code("Could not load raw JSON", language="text")
-                else:
-                    st.info("Output JSON file not found.")
-            else:
-                st.info("No raw JSON available.")
+
 
 
 def _count_review_status(conn, project_id, status):
@@ -742,11 +726,11 @@ def _render_video_result_card(conn, media):
     pred = preds[0] if preds else None
     item = items[0] if items else None
 
-    # Count frame categories from detections
-    animal_count = sum(1 for d in dets if (d.detector_label or "").lower() == "animal")
-    human_count = sum(1 for d in dets if (d.detector_label or "").lower() == "human")
-    vehicle_count = sum(1 for d in dets if (d.detector_label or "").lower() == "vehicle")
-    blank_count = sum(1 for p in preds if (p.prediction_label or "").lower() in ("blank", "empty"))
+    # Count frame categories from detections safely
+    animal_count = sum(1 for d in dets if getattr(d, 'detector_label', None) and d.detector_label.lower() == "animal")
+    human_count = sum(1 for d in dets if getattr(d, 'detector_label', None) and d.detector_label.lower() == "human")
+    vehicle_count = sum(1 for d in dets if getattr(d, 'detector_label', None) and d.detector_label.lower() == "vehicle")
+    blank_count = sum(1 for p in preds if getattr(p, 'prediction_label', None) and p.prediction_label.lower() in ("blank", "empty"))
 
     st.markdown(f'<div class="ps-card" style="padding:12px;margin-bottom:8px;">', unsafe_allow_html=True)
     c1, c2 = st.columns([1, 3], gap="medium")
@@ -755,16 +739,46 @@ def _render_video_result_card(conn, media):
         # Try to show best frame thumbnail if we have video summaries
         batch_result = st.session_state.get("last_batch")
         best_frame_shown = False
-        if batch_result and batch_result.video_summaries:
+        if batch_result and getattr(batch_result, 'video_summaries', None):
             for vs in batch_result.video_summaries:
-                if vs.video_file == media.original_filename and vs.best_frame_path:
+                if getattr(vs, 'video_file', None) == getattr(media, 'original_filename', None) and getattr(vs, 'best_frame_path', None):
                     best_path = Path(vs.best_frame_path)
                     if best_path.exists():
                         from services.bbox_draw import best_video_frame_thumbnail
-                        frame_img = best_video_frame_thumbnail(best_path)
+                        # Find detections for this specific frame from Prediction records
+                        frame_dets = []
+                        import json
+                        for p in preds:
+                            if p.raw_prediction_json:
+                                try:
+                                    raw = json.loads(p.raw_prediction_json)
+                                    # MegaDetector format: raw['file'] matches best_path.name or similar
+                                    if raw.get('file', '').endswith(best_path.name) or raw.get('filepath', '').endswith(best_path.name):
+                                        # Use _parse_md_entry or similar to get normalized detections
+                                        # Actually we can just use the raw detections but we need to map them to the format bbox_draw expects
+                                        # But bbox_draw expects keys: detector_label, detector_confidence, bbox_x, bbox_y, bbox_w, bbox_h
+                                        # Let's extract from raw
+                                        for d in raw.get("detections", []):
+                                            bx, by, bw, bh = None, None, None, None
+                                            if "bbox" in d and len(d["bbox"]) == 4:
+                                                bx, by, bw, bh = d["bbox"]
+                                            cat = str(d.get("category", ""))
+                                            # We just need some label, it doesn't have to be perfect if we don't have the mapping here
+                                            label = "animal" if cat == "1" else "human" if cat == "2" else "vehicle" if cat == "3" else "detection"
+                                            frame_dets.append({
+                                                "detector_label": label,
+                                                "detector_confidence": d.get("conf"),
+                                                "bbox_x": bx, "bbox_y": by, "bbox_w": bw, "bbox_h": bh,
+                                                "bbox_format": "normalized_xywh",
+                                                "prediction_label": vs.best_species_prediction
+                                            })
+                                except Exception:
+                                    pass
+                        
+                        frame_img = best_video_frame_thumbnail(best_path, frame_dets)
                         if frame_img:
                             st.image(frame_img, use_container_width=True,
-                                     caption="Best frame")
+                                     caption=f"Best frame (t={getattr(vs, 'best_species_score', 'N/A')})")
                             best_frame_shown = True
                     break
         if not best_frame_shown:
@@ -777,8 +791,8 @@ def _render_video_result_card(conn, media):
             )
 
     with c2:
-        label = pred.prediction_label if pred else "no prediction"
-        score = pred.prediction_score if pred else None
+        label = getattr(pred, 'prediction_label', "no prediction") if pred else "no prediction"
+        score = getattr(pred, 'prediction_score', None) if pred else None
         conf_clr = CLR_TEAL if (score and score >= BORDERLINE_CONFIDENCE) else CLR_AMBER
 
         st.markdown(

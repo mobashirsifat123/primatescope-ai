@@ -1,0 +1,71 @@
+{
+  "predictions": [
+    {
+      "filepath": "CS-1_blank.jpg",
+      "detections": [],
+      "prediction": "blank",
+      "prediction_score": 0.98,
+      "prediction_source": "classifier",
+      "model_version": "speciesnet_v4.0.3a"
+    },
+    {
+      "filepath": "CS-2_animal.jpg",
+      "detections": [
+        {"category": "1", "label": "animal", "conf": 0.95, "bbox": [0.1, 0.2, 0.4, 0.5]}
+      ],
+      "classifications": {"classes": ["pan troglodytes", "pan troglodytes verus"], "scores": [0.88, 0.05]},
+      "prediction": "pan troglodytes",
+      "prediction_score": 0.88,
+      "prediction_source": "classifier",
+      "model_version": "speciesnet_v4.0.3a"
+    },
+    {
+      "filepath": "CS-3_human.jpg",
+      "detections": [
+        {"category": "2", "label": "human", "conf": 0.92, "bbox": [0.3, 0.1, 0.35, 0.8]}
+      ],
+      "prediction": "human",
+      "prediction_score": 0.92,
+      "prediction_source": "detector",
+      "model_version": "speciesnet_v4.0.3a"
+    },
+    {
+      "filepath": "CS-4_multi.jpg",
+      "detections": [
+        {"category": "1", "label": "animal", "conf": 0.91, "bbox": [0.05, 0.1, 0.3, 0.4]},
+        {"category": "1", "label": "animal", "conf": 0.82, "bbox": [0.5, 0.5, 0.3, 0.4]},
+        {"category": "3", "label": "vehicle", "conf": 0.76, "bbox": [0.7, 0.7, 0.2, 0.2]}
+      ],
+      "prediction": "animal",
+      "prediction_score": 0.91,
+      "prediction_source": "detector",
+      "model_version": "speciesnet_v4.0.3a"
+    },
+    {
+      "filepath": "CS-5_vehicle.jpg",
+      "detections": [
+        {"category": "3", "label": "vehicle", "conf": 0.88, "bbox": [0.2, 0.3, 0.6, 0.4]}
+      ],
+      "prediction": "vehicle",
+      "prediction_score": 0.88,
+      "prediction_source": "detector",
+      "model_version": "speciesnet_v4.0.3a"
+    },
+    {
+      "filepath": "CS-6_borderline.jpg",
+      "detections": [
+        {"category": "1", "label": "animal", "conf": 0.45, "bbox": [0.1, 0.1, 0.2, 0.2]}
+      ],
+      "classifications": {"classes": ["felidae", "mammalia"], "scores": [0.52, 0.3]},
+      "prediction": "felidae",
+      "prediction_score": 0.52,
+      "prediction_source": "classifier",
+      "model_version": "speciesnet_v4.0.3a"
+    },
+    {
+      "filepath": "CS-7_failure.jpg",
+      "failures": ["DETECTOR"],
+      "model_version": "speciesnet_v4.0.3a"
+    }
+  ]
+}

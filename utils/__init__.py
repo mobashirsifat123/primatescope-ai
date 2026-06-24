@@ -1,0 +1,1 @@
+"""PrimateScope AI — shared utilities."""
