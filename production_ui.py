@@ -49,6 +49,7 @@ def _get_conn():
     return get_connection()
 
 
+@st.cache_data(ttl=300)
 def _env_status():
     sn_ok, sn_msg = check_speciesnet_available()
     md_ok, md_msg = check_megadetector_available()

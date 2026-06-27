@@ -154,7 +154,9 @@ def _reuse_or_run(output_json, project_id, folder, country, force, now, engine):
         return InferenceRunResult(True, 0, str(output_json), "(reused)", "", None, 0.0, now, now, "(reused)")
     if engine == "md_and_speciesnet":
         from services.speciesnet_runner import run_md_and_speciesnet
-        return run_md_and_speciesnet(project_id, folder, output_json, country)
+        # Optimize inference speed by increasing batch sizes
+        extra = ["--detector_batch_size", "8", "--classifier_batch_size", "16"]
+        return run_md_and_speciesnet(project_id, folder, output_json, country, extra_args=extra)
     return run_speciesnet_on_folder(project_id, folder, output_json, country)
 
 
