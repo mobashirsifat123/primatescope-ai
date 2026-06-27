@@ -1,9 +1,10 @@
+from __future__ import annotations
+import re
 """PrimateScope AI — production UI functions for Streamlit.
 
 Contains the Real Inference mode page renderers so app.py stays thin. All
 functions use the existing Obsidian Canopy CSS classes and design tokens.
 """
-from __future__ import annotations
 
 import json
 from pathlib import Path

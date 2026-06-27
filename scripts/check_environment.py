@@ -57,6 +57,38 @@ def check_package(name: str, import_name: str | None = None) -> bool:
         return False
 
 
+def check_package_subprocess(name: str, import_name: str | None = None) -> bool:
+    """Import-check a package in a clean subprocess with ``PYTHONSAFEPATH=1``.
+
+    Used for packages (e.g. speciesnet) whose dependencies use flat imports
+    that collide with this project's top-level ``utils`` package when the
+    project root is on ``sys.path``.
+    """
+    import os
+    import subprocess
+
+    imp = import_name or name
+    env = dict(os.environ)
+    env["PYTHONSAFEPATH"] = "1"
+    code = (
+        f"import {imp} as m; "
+        f"print(getattr(m, '__version__', 'unknown'))"
+    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True, text=True, timeout=120, check=False, env=env,
+        )
+        if proc.returncode == 0:
+            _ok(f"{name} {proc.stdout.strip() or 'unknown'}")
+            return True
+        _warn(f"{name} not installed")
+        return False
+    except Exception:
+        _warn(f"{name} not installed")
+        return False
+
+
 def main() -> int:
     print("=" * 60)
     print("  PrimateScope AI — Environment Check")
@@ -77,8 +109,8 @@ def main() -> int:
     print("\nML / Inference packages:")
     check_package("ultralytics")
     check_package("torch")
-    check_package("speciesnet")
-    check_package("megadetector")
+    check_package_subprocess("speciesnet")
+    check_package_subprocess("megadetector")
 
     print("\nCLI availability:")
     from services.speciesnet_runner import (
