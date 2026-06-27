@@ -317,8 +317,8 @@ def page_live_analysis_real():
         debug_country = st.checkbox("Disable country filter for debugging", value=False, key="real_debug_country")
         frame_interval = st.slider(
             "Detection frame interval",
-            min_value=0.25, max_value=5.0, value=1.0, step=0.25,
-            help="For videos, extract 1 frame every N seconds. Use 0.5s for short clips.",
+            min_value=0.25, max_value=5.0, value=2.0, step=0.25,
+            help="For videos, extract 1 frame every N seconds. Higher = faster analysis. Use 0.5s only for very short clips needing high detail.",
             key="real_frame_interval",
         )
 
@@ -423,33 +423,6 @@ def _render_last_batch_results():
         return
 
     _render_backend_proof(result)
-
-    # Frame Extraction Preview
-    from services.file_storage import FileStorage
-    _storage = FileStorage()
-    pid = st.session_state.get("ps_project_id")
-    conn = _get_conn()
-    try:
-        media_list = MediaRepo.list_by_project(conn, pid)
-        video_media = [m for m in media_list if m.media_type == "video"]
-        for vm in video_media:
-            frames_dir = _storage.frames_dir(pid, Path(vm.original_filename).stem)
-            if frames_dir.exists():
-                frames = sorted(list(frames_dir.glob("*.jpg")))
-                if frames:
-                    with st.expander(f"Frame Extraction Preview: {vm.original_filename}"):
-                        st.markdown(f"**Total frames extracted:** {len(frames)}")
-                        st.markdown(f"**Dimensions:** {getattr(vm, 'width', 'N/A')}x{getattr(vm, 'height', 'N/A')}")
-                        st.markdown("**First 10 frames:**")
-                        cols = st.columns(5)
-                        for idx, fp in enumerate(frames[:10]):
-                            with cols[idx % 5]:
-                                # Try to extract timestamp from filename e.g. _t005.00
-                                ts_match = re.search(r"_t([0-9.]+)\.jpg", fp.name)
-                                ts_str = f"t={ts_match.group(1)}s" if ts_match else "t=?"
-                                st.image(str(fp), caption=ts_str, use_container_width=True)
-    finally:
-        conn.close()
 
     # Raw JSON expander
     if getattr(result, "parse_result", None):
@@ -568,8 +541,11 @@ def _render_last_batch_results():
 
     conn = _get_conn()
     try:
-        media_list = MediaRepo.list_by_project(conn, pid)
-        for m in media_list[:20]:
+        all_media = MediaRepo.list_by_project(conn, pid)
+        # Only show cards for the media processed in this specific batch
+        media_list = [m for m in all_media if m.id in getattr(result, "processed_media_ids", [])]
+        
+        for m in media_list:
             if m.media_type == "video":
                 _render_video_result_card(conn, m)
             else:
@@ -785,9 +761,8 @@ def _render_video_result_card(conn, media):
         if not best_frame_shown:
             st.markdown(
                 f'<div class="ps-media" style="height:80px;display:flex;'
-                f'align-items:center;justify-content:center;">'
-                f'<span class="material-symbols-outlined" style="font-size:32px;color:{CLR_SLATE};">'
-                f'videocam</span></div>',
+                f'align-items:center;justify-content:center;font-size:32px;">'
+                f'📹</div>',
                 unsafe_allow_html=True,
             )
 
@@ -846,22 +821,80 @@ def _render_video_result_card(conn, media):
                 unsafe_allow_html=True,
             )
 
-    # Timeline expander for video clips
+    # Timeline expander for video clips (with annotated frames)
     if batch_result and batch_result.video_summaries:
         for vs in batch_result.video_summaries:
             if vs.video_file == media.original_filename and vs.timeline:
-                with st.expander(f"Frame Timeline ({len(vs.timeline)} frames)"):
-                    tl_rows = []
-                    for fr in vs.timeline:
-                        tl_rows.append({
-                            "time_s": fr.get("timestamp_seconds", "?"),
-                            "detector": fr.get("detector_label", "—"),
-                            "prediction": fr.get("prediction_label", "—"),
-                            "score": fr.get("prediction_score"),
-                        })
-                    if tl_rows:
-                        st.dataframe(pd.DataFrame(tl_rows), use_container_width=True,
-                                     hide_index=True)
+                with st.expander(f"Frame Timeline ({len(vs.timeline)} frames)", expanded=True):
+                    from services.bbox_draw import draw_bboxes_on_image
+                    import json as _json
+
+                    # Map raw coords to each frame
+                    bbox_by_frame = {}
+                    for p in preds:
+                        if p.raw_prediction_json:
+                            try:
+                                raw = _json.loads(p.raw_prediction_json)
+                                file_key = raw.get("file") or raw.get("filepath") or ""
+                                fname = Path(file_key).name
+                                # Find matching frame in timeline
+                                for fr in vs.timeline:
+                                    fp = fr.get("frame_path", "")
+                                    if Path(fp).name == fname or fp.endswith(file_key):
+                                        dets_list = []
+                                        for d in raw.get("detections", []):
+                                            bx, by, bw, bh = None, None, None, None
+                                            if "bbox" in d and len(d["bbox"]) == 4:
+                                                bx, by, bw, bh = d["bbox"]
+                                            cat = str(d.get("category", ""))
+                                            lbl = "animal" if cat == "1" else "human" if cat == "2" else "vehicle" if cat == "3" else "detection"
+                                            dets_list.append({
+                                                "detector_label": lbl,
+                                                "detector_confidence": d.get("conf"),
+                                                "bbox_x": bx, "bbox_y": by,
+                                                "bbox_w": bw, "bbox_h": bh,
+                                                "bbox_format": "normalized_xywh",
+                                                "prediction_label": fr.get("prediction_label"),
+                                            })
+                                        if dets_list:
+                                            bbox_by_frame[fp] = dets_list
+                                        break
+                            except Exception:
+                                pass
+
+                    sorted_timeline = sorted(vs.timeline, key=lambda e: e.get("timestamp_seconds") or 0)
+                    cols_per_row = 3  # Use 3 cols for bigger images inside the card
+                    for row_start in range(0, len(sorted_timeline), cols_per_row):
+                        row = sorted_timeline[row_start: row_start + cols_per_row]
+                        cols = st.columns(cols_per_row)
+                        for col_idx, entry in enumerate(row):
+                            fp = entry.get("frame_path", "")
+                            ts = entry.get("timestamp_seconds")
+                            det_label = entry.get("detector_label") or "—"
+                            pred_label = entry.get("prediction_label") or "—"
+                            pred_score = entry.get("prediction_score")
+                            ts_str = f"t={ts:.1f}s" if ts is not None else "t=?"
+                            score_label = f"{pred_label} {pred_score:.2f}" if pred_score else pred_label
+
+                            with cols[col_idx]:
+                                frame_path = Path(fp)
+                                if frame_path.exists():
+                                    det_dicts = bbox_by_frame.get(fp, [])
+                                    if det_dicts:
+                                        annotated = draw_bboxes_on_image(frame_path, det_dicts)
+                                        if annotated:
+                                            st.image(annotated, use_container_width=True, caption=f"{ts_str} · {score_label}")
+                                        else:
+                                            st.image(str(frame_path), use_container_width=True, caption=f"{ts_str} · {score_label}")
+                                    else:
+                                        st.image(str(frame_path), use_container_width=True, caption=f"{ts_str} · {det_label} · {score_label}")
+                                else:
+                                    st.markdown(
+                                        f'<div style="height:80px;display:flex;align-items:center;'
+                                        f'justify-content:center;color:#94A3B8;font-size:10px;">'
+                                        f'{ts_str}<br>frame missing</div>',
+                                        unsafe_allow_html=True,
+                                    )
                 break
 
         if item:

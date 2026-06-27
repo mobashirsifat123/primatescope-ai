@@ -31,9 +31,15 @@ def _safe_env() -> dict:
     yolov5 uses flat imports such as ``from utils.autoanchor import ...``.
     Setting ``PYTHONSAFEPATH=1`` stops Python from prepending the current
     working directory to ``sys.path``, avoiding the namespace collision.
+
+    ``PYTORCH_ENABLE_MPS_FALLBACK=1`` allows PyTorch to use Apple Silicon
+    MPS (Metal Performance Shaders) GPU acceleration. Ops not yet native on
+    MPS fall back to CPU automatically rather than raising an error.
     """
     env = dict(os.environ)
     env["PYTHONSAFEPATH"] = "1"
+    # Enable Apple Silicon MPS GPU acceleration for SpeciesNet / MegaDetector.
+    env["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
     return env
 
 

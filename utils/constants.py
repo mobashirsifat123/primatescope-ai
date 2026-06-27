@@ -141,8 +141,11 @@ DEFAULT_PROJECT_NAME = "PrimateScope Local Project"
 MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024
 
 # Video frame extraction defaults.
-FRAME_INTERVAL_SECONDS = 1.0
-MAX_FRAMES_PER_CLIP = 60
+# 2.0s interval = 1 frame every 2 seconds. For a 30s clip that's 15 frames
+# instead of 30 — cuts SpeciesNet inference time roughly in half while still
+# giving adequate temporal coverage for camera-trap wildlife clips.
+FRAME_INTERVAL_SECONDS = 2.0
+MAX_FRAMES_PER_CLIP = 30
 
 # ---------------------------------------------------------------------------
 # Obsidian Canopy design tokens (mirror app.py; used by bbox overlay)

@@ -49,6 +49,7 @@ class BatchResult:
     parse_result: Optional[ParseResult] = None
     video_summaries: list = field(default_factory=list)
     errors: list = field(default_factory=list)
+    processed_media_ids: list[str] = field(default_factory=list)
 
 
 def save_uploaded_files(conn, storage, project_id, uploaded_files):
@@ -210,40 +211,87 @@ def run_image_pipeline(conn, storage, project_id, image_media, country=None, for
 
 
 def run_video_pipeline(conn, storage, project_id, video_media, country=None, force=False, frame_interval=1.0, det_thresh=0.25, review_thresh=0.70, engine="md_and_speciesnet"):
-    """Extract frames from each video, run SpeciesNet on frames, aggregate."""
+    """Extract frames from each video, run SpeciesNet on frames, aggregate.
+
+    Uses a run-specific staging directory (outputs/<project_id>/frames_<run_id>/)
+    that contains ONLY the frames extracted from the currently uploaded video(s).
+    This prevents SpeciesNet from scanning old video frame folders that have
+    accumulated in uploads/<project_id>/frames/ from previous runs.
+    """
     result = BatchResult(project_id=project_id, video_count=len(video_media))
     if not video_media:
         result.inference_error = "No video files to process."
         return result
-    frames_root = storage.uploads / project_id / "frames"
-    frames_root.mkdir(parents=True, exist_ok=True)
+
     run_id = f"run_{uuid.uuid4().hex[:12]}"
     now = iso_now()
     out_json = storage.outputs_dir(project_id) / f"{run_id}.json"
+
+    # Run-scoped staging directory — only this run's frames go here.
+    # This is the directory passed to the inference engine so it never
+    # sees frames from previous uploads.
+    run_frames_staging = storage.outputs_dir(project_id) / f"frames_{run_id}"
+    run_frames_staging.mkdir(parents=True, exist_ok=True)
+
     InferenceRepo.insert(conn, InferenceRun(
         id=run_id, project_id=project_id, engine=engine,
-        country_code=country, input_path=str(frames_root),
+        country_code=country, input_path=str(run_frames_staging),
         output_json_path=str(out_json), status=RUN_RUNNING, started_at=now,
     ))
+
     frame_to_media, frame_to_ts = {}, {}
+    staged_to_original = {}
     for vm in video_media:
+        # Extract frames into the permanent per-video frames directory
+        # (used for the UI preview and future re-use).
         frames = extract_frames(
             vm.stored_path,
             storage.frames_dir(project_id, Path(vm.original_filename).stem),
             frame_interval_seconds=frame_interval,
         )
         for fi in frames:
-            frame_to_media[str(fi.frame_path)] = vm.id
+            frame_path = Path(fi.frame_path)
+            # Symlink each frame into the run-scoped staging directory.
+            # Use a unique name to avoid collisions when multiple videos
+            # are uploaded in the same run.
+            staging_link = run_frames_staging / frame_path.name
+            # Ensure uniqueness if two videos have frames with the same name.
+            if staging_link.exists() or staging_link.is_symlink():
+                stem, suffix = frame_path.stem, frame_path.suffix
+                staging_link = run_frames_staging / f"{stem}_{uuid.uuid4().hex[:6]}{suffix}"
+            try:
+                staging_link.symlink_to(frame_path.resolve())
+                staged_path = str(staging_link)
+            except (OSError, NotImplementedError):
+                # Fallback: copy the file if symlinks are not supported.
+                import shutil as _shutil
+                _shutil.copy2(str(frame_path), str(staging_link))
+                staged_path = str(staging_link)
+
+            # Map the staged path back to the original frame path for DB persistence.
+            staged_to_original[staged_path] = str(fi.frame_path)
+            frame_to_media[staged_path] = vm.id
+            frame_to_media[str(fi.frame_path)] = vm.id  # also map original
+            frame_to_ts[staged_path] = fi.timestamp_seconds
             frame_to_ts[str(fi.frame_path)] = fi.timestamp_seconds
+
         MediaRepo.update_status(conn, vm.id, PROC_PROCESSING)
+
     if not frame_to_media:
         InferenceRepo.update(conn, run_id, status=RUN_FAILED, finished_at=iso_now(),
                              error_message="No frames could be extracted.")
         result.inference_error = "No frames could be extracted from videos."
         for vm in video_media:
             MediaRepo.update_status(conn, vm.id, PROC_FAILED)
+        # Clean up empty staging dir.
+        try:
+            run_frames_staging.rmdir()
+        except OSError:
+            pass
         return result
-    inf = _reuse_or_run(out_json, project_id, frames_root, country, force, now, engine)
+
+    # Run inference ONLY on the run-scoped staging directory.
+    inf = _reuse_or_run(out_json, project_id, run_frames_staging, country, force, now, engine)
     result.inference_result = inf
     result.inference_success = inf.success
     result.inference_error = inf.error_message
@@ -253,6 +301,12 @@ def run_video_pipeline(conn, storage, project_id, video_media, country=None, for
                              duration_seconds=inf.duration_seconds)
         for vm in video_media:
             MediaRepo.update_status(conn, vm.id, PROC_FAILED)
+        # Clean up staging dir on failure.
+        try:
+            import shutil as _shutil
+            _shutil.rmtree(str(run_frames_staging), ignore_errors=True)
+        except Exception:
+            pass
         return result
     pr = parse_speciesnet_output(out_json)
     result.parse_result = pr
@@ -269,6 +323,11 @@ def run_video_pipeline(conn, storage, project_id, video_media, country=None, for
                     fp = k  # Use the absolute path for DB storage
                     pred.filepath = k
                     break
+        
+        # Restore original path if this is a staged path
+        if fp in staged_to_original:
+            fp = staged_to_original[fp]
+            pred.filepath = fp
         
         # If still None, it might be an image run
         if mid is None:
@@ -316,6 +375,13 @@ def run_video_pipeline(conn, storage, project_id, video_media, country=None, for
     result.detection_count = dc
     result.prediction_count = pc
     result.review_item_count = rc
+    # Clean up run-scoped staging directory — original frames are preserved
+    # in uploads/<project_id>/frames/<video_stem>/ for the UI preview.
+    try:
+        import shutil as _shutil
+        _shutil.rmtree(str(run_frames_staging), ignore_errors=True)
+    except Exception:
+        pass
     return result
 
 
@@ -353,4 +419,5 @@ def run_full_batch(conn, storage, project_id, uploaded_files, country,
     c.parse_result = ir.parse_result or vr.parse_result
     c.video_summaries = vr.video_summaries
     c.errors = ir.errors + vr.errors
+    c.processed_media_ids = [m.id for m in media]
     yield c
